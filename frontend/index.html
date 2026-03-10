@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edit Banana - Image to Diagram</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --primary: #4f6ef7;
+  --primary-light: #eef1fe;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --bg: #f8f9fc;
+  --sidebar-bg: #fff;
+  --card-bg: #fff;
+  --text: #1e293b;
+  --text-muted: #94a3b8;
+  --border: #e2e8f0;
+  --radius: 10px;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+/* ---- Sidebar ---- */
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-header h1 {
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-header h1 .emoji { font-size: 24px; }
+.backend-status {
+  margin-top: 8px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.status-dot.connected { background: var(--success); }
+
+.upload-area {
+  margin: 16px;
+  padding: 24px 16px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+}
+.upload-area:hover {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.upload-area .icon { font-size: 32px; margin-bottom: 8px; }
+.upload-area p { font-size: 13px; color: var(--text-muted); }
+.upload-area .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+#fileInput { display: none; }
+
+.file-list-header {
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.file-list-header button {
+  background: none;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+}
+.file-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s;
+  margin-bottom: 4px;
+}
+.file-item:hover { background: var(--bg); }
+.file-item.active { background: var(--primary-light); }
+.file-item .thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.file-item .info { flex: 1; min-width: 0; }
+.file-item .name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-item .status-badge {
+  font-size: 11px;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.file-item .status-badge.done { color: var(--success); }
+.file-item .status-badge.processing { color: var(--primary); }
+.file-item .status-badge.error { color: var(--danger); }
+.file-item .status-badge.pending { color: var(--text-muted); }
+
+/* ---- Main ---- */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.main-header {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card-bg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.main-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.main-header .actions { display: flex; gap: 8px; }
+.btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all .15s;
+}
+.btn:hover { border-color: var(--primary); color: var(--primary); }
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.btn-primary:hover { background: #3b5de7; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- Tabs ---- */
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--card-bg);
+  padding: 0 24px;
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.main-content {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.main-content.no-center {
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+/* ---- Empty state ---- */
+.empty-state {
+  text-align: center;
+  color: var(--text-muted);
+}
+.empty-state .icon { font-size: 64px; margin-bottom: 16px; }
+.empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+.empty-state p { font-size: 14px; }
+
+/* ---- Preview ---- */
+.preview-container {
+  width: 100%;
+  max-width: 900px;
+  padding: 24px;
+  margin: 0 auto;
+}
+.preview-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.preview-card img {
+  width: 100%;
+  display: block;
+}
+.preview-info {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.preview-info .filename {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+/* ---- Progress ---- */
+.progress-section {
+  margin-top: 20px;
+}
+.progress-bar-container {
+  background: var(--bg);
+  border-radius: 20px;
+  height: 8px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #818cf8);
+  border-radius: 20px;
+  transition: width .5s ease;
+  width: 0%;
+}
+.progress-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ---- Result ---- */
+.result-section {
+  margin-top: 20px;
+  padding: 16px 20px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius);
+}
+.result-section h4 {
+  color: #15803d;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.result-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.result-actions .btn { background: #fff; }
+
+/* ---- Draw.io embed ---- */
+.drawio-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.drawio-wrapper iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+}
+.drawio-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ---- Spinner ---- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+}
+.spinner-lg {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+/* ---- Config panel ---- */
+.config-panel {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.config-panel label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1><span class="emoji">&#127820;</span> Edit Banana</h1>
+      <div class="backend-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </div>
+
+    <div class="upload-area" id="uploadArea">
+      <div class="icon">&#128193;</div>
+      <p>Click or drag to upload</p>
+      <div class="hint">PNG, JPG, PDF supported</div>
+      <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.pdf,.bmp,.webp" multiple>
+    </div>
+
+    <div class="config-panel">
+      <label>
+        <input type="checkbox" id="forceReprocess"> Force Reprocess
+      </label>
+    </div>
+
+    <div class="file-list-header">
+      <span>Your Files (<span id="fileCount">0</span>)</span>
+      <button onclick="clearAll()">Clear All</button>
+    </div>
+    <div class="file-list" id="fileList"></div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="main-header">
+      <h2 id="mainTitle">Image to Diagram</h2>
+      <div class="actions">
+        <button class="btn" id="btnProcess" onclick="processSelected()" disabled>
+          Process
+        </button>
+        <button class="btn btn-primary" id="btnProcessAll" onclick="processAll()" disabled>
+          Process All
+        </button>
+      </div>
+    </div>
+
+    <div id="tabBar" class="tab-bar" style="display:none;">
+      <button class="tab-btn active" data-tab="preview" onclick="switchTab('preview')">Original</button>
+      <button class="tab-btn" data-tab="editor" onclick="switchTab('editor')">Draw.io Editor</button>
+    </div>
+
+    <div class="main-content" id="mainContent">
+      <div class="empty-state">
+        <div class="icon">&#127820;</div>
+        <h3>Upload an image to get started</h3>
+        <p>Drop images here or use the upload area on the left.<br>
+        Get editable DrawIO (XML) output in seconds.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const API_BASE = window.location.origin;
+const files = [];
+let selectedId = null;
+let currentTab = 'preview';
+let drawioReady = false;
+let pendingXml = null;
+
+// ---- Backend health check ----
+async function checkBackend() {
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  try {
+    const r = await fetch(API_BASE + '/health', { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      dot.className = 'status-dot connected';
+      txt.textContent = 'Backend Connected';
+      return true;
+    }
+  } catch(e) {}
+  dot.className = 'status-dot';
+  txt.textContent = 'Backend Offline';
+  return false;
+}
+checkBackend();
+setInterval(checkBackend, 15000);
+
+// ---- Upload ----
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('fileInput');
+
+uploadArea.addEventListener('click', function() { fileInput.click(); });
+uploadArea.addEventListener('dragover', function(e) { e.preventDefault(); uploadArea.style.borderColor = 'var(--primary)'; });
+uploadArea.addEventListener('dragleave', function() { uploadArea.style.borderColor = ''; });
+uploadArea.addEventListener('drop', function(e) {
+  e.preventDefault();
+  uploadArea.style.borderColor = '';
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', function(e) { handleFiles(e.target.files); });
+
+function handleFiles(fileList) {
+  for (var i = 0; i < fileList.length; i++) {
+    var f = fileList[i];
+    var id = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    var entry = {
+      id: id,
+      name: f.name,
+      file: f,
+      thumbUrl: null,
+      status: 'pending',
+      progress: 0,
+      progressText: '',
+      resultPath: null,
+      resultBlob: null,
+      resultXml: null,
+      errorMsg: '',
+    };
+    if (f.type.startsWith('image/')) {
+      entry.thumbUrl = URL.createObjectURL(f);
+    }
+    files.push(entry);
+  }
+  renderFileList();
+  if (files.length === 1) selectFile(files[0].id);
+  updateButtons();
+  fileInput.value = '';
+}
+
+// ---- File List ----
+function renderFileList() {
+  var list = document.getElementById('fileList');
+  document.getElementById('fileCount').textContent = files.length;
+
+  list.innerHTML = files.map(function(f) {
+    var thumbHtml = f.thumbUrl
+      ? '<img class="thumb" src="' + f.thumbUrl + '">'
+      : '<div class="thumb" style="display:flex;align-items:center;justify-content:center;background:var(--bg);font-size:18px;">&#128196;</div>';
+    var statusHtml = '';
+    if (f.status === 'done') statusHtml = '&#9989; Done';
+    else if (f.status === 'processing') statusHtml = '<span class="spinner"></span> Processing...';
+    else if (f.status === 'error') statusHtml = '&#10060; Error';
+    else statusHtml = '&#9203; Pending';
+    return '<div class="file-item ' + (f.id === selectedId ? 'active' : '') + '" onclick="selectFile(\'' + f.id + '\')">'
+      + thumbHtml
+      + '<div class="info"><div class="name" title="' + f.name + '">' + f.name + '</div>'
+      + '<div class="status-badge ' + f.status + '">' + statusHtml + '</div></div></div>';
+  }).join('');
+}
+
+function selectFile(id) {
+  selectedId = id;
+  var f = getFile(id);
+  if (f && f.status === 'done') {
+    currentTab = 'editor';
+  } else {
+    currentTab = 'preview';
+  }
+  renderFileList();
+  renderMain();
+  updateButtons();
+}
+
+function clearAll() {
+  files.length = 0;
+  selectedId = null;
+  currentTab = 'preview';
+  renderFileList();
+  renderMain();
+  updateButtons();
+}
+
+function updateButtons() {
+  var f = getFile(selectedId);
+  document.getElementById('btnProcess').disabled = !selectedId || (f && f.status === 'processing');
+  document.getElementById('btnProcessAll').disabled = files.length === 0;
+}
+
+function getFile(id) {
+  for (var i = 0; i < files.length; i++) {
+    if (files[i].id === id) return files[i];
+  }
+  return null;
+}
+
+// ---- Tabs ----
+function switchTab(tab) {
+  currentTab = tab;
+  var btns = document.querySelectorAll('.tab-btn');
+  btns.forEach(function(b) {
+    b.classList.toggle('active', b.getAttribute('data-tab') === tab);
+  });
+  renderMainContent();
+}
+
+// ---- Main Content ----
+function renderMain() {
+  var mc = document.getElementById('mainContent');
+  var tabBar = document.getElementById('tabBar');
+  var f = getFile(selectedId);
+
+  if (!f) {
+    tabBar.style.display = 'none';
+    mc.className = 'main-content';
+    mc.innerHTML = '<div class="empty-state">'
+      + '<div class="icon">&#127820;</div>'
+      + '<h3>Upload an image to get started</h3>'
+      + '<p>Drop images here or use the upload area on the left.<br>'
+      + 'Get editable DrawIO (XML) output in seconds.</p></div>';
+    document.getElementById('mainTitle').textContent = 'Image to Diagram';
+    return;
+  }
+
+  document.getElementById('mainTitle').textContent = f.name;
+
+  if (f.status === 'done') {
+    tabBar.style.display = 'flex';
+    var btns = document.querySelectorAll('.tab-btn');
+    btns.forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-tab') === currentTab);
+    });
+  } else {
+    tabBar.style.display = 'none';
+    currentTab = 'preview';
+  }
+
+  renderMainContent();
+}
+
+function renderMainContent() {
+  var mc = document.getElementById('mainContent');
+  var f = getFile(selectedId);
+  if (!f) return;
+
+  if (currentTab === 'editor' && f.status === 'done') {
+    mc.className = 'main-content no-center';
+    renderEditor(mc, f);
+    return;
+  }
+
+  mc.className = 'main-content';
+  var html = '<div class="preview-container">';
+
+  if (f.thumbUrl) {
+    html += '<div class="preview-card">'
+      + '<img src="' + f.thumbUrl + '" alt="' + f.name + '">'
+      + '<div class="preview-info">'
+      + '<span class="filename">' + f.name + '</span>'
+      + '<span style="font-size:12px;color:var(--text-muted)">' + (f.file.size / 1024).toFixed(1) + ' KB</span>'
+      + '</div></div>';
+  }
+
+  if (f.status === 'processing') {
+    html += '<div class="progress-section">'
+      + '<div class="progress-text"><span>' + (f.progressText || 'Processing...') + '</span><span>' + f.progress + '%</span></div>'
+      + '<div class="progress-bar-container"><div class="progress-bar" style="width:' + f.progress + '%"></div></div>'
+      + '</div>';
+  }
+
+  if (f.status === 'error') {
+    html += '<div style="margin-top:20px;padding:16px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius);">'
+      + '<strong style="color:var(--danger)">&#10060; Processing failed</strong>'
+      + '<p style="font-size:13px;color:#991b1b;margin-top:4px">' + (f.errorMsg || 'Unknown error') + '</p>'
+      + '<button class="btn" style="margin-top:8px" onclick="processFile(\'' + f.id + '\')">Retry</button>'
+      + '</div>';
+  }
+
+  if (f.status === 'done') {
+    html += '<div class="result-section">'
+      + '<h4>&#9989; Conversion Complete</h4>'
+      + '<div class="result-actions">'
+      + '<button class="btn" onclick="downloadResult(\'' + f.id + '\')">&#128229; Download .drawio.xml</button>'
+      + '<button class="btn" onclick="switchTab(\'editor\')">&#9998; Open in Editor</button>'
+      + '<button class="btn" onclick="processFile(\'' + f.id + '\')">&#128260; Reprocess</button>'
+      + '</div></div>';
+  }
+
+  html += '</div>';
+  mc.innerHTML = html;
+}
+
+// ---- Embedded draw.io editor ----
+function renderEditor(container, f) {
+  drawioReady = false;
+  pendingXml = null;
+
+  container.innerHTML = '<div class="drawio-wrapper">'
+    + '<div class="drawio-loading" id="drawioLoading">'
+    + '<div class="spinner spinner-lg"></div>'
+    + '<span>Loading draw.io editor...</span>'
+    + '</div>'
+    + '<iframe id="drawioFrame" style="display:none;"></iframe>'
+    + '</div>';
+
+  // Read the XML content
+  if (f.resultXml) {
+    initDrawio(f.resultXml);
+  } else if (f.resultBlob) {
+    var reader = new FileReader();
+    reader.onload = function() {
+      f.resultXml = reader.result;
+      initDrawio(f.resultXml);
+    };
+    reader.readAsText(f.resultBlob);
+  } else {
+    container.innerHTML = '<div class="empty-state"><p>No result data available. Try reprocessing.</p></div>';
+  }
+}
+
+function initDrawio(xml) {
+  pendingXml = xml;
+  var frame = document.getElementById('drawioFrame');
+  if (!frame) return;
+
+  // Use draw.io embed mode
+  frame.src = 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&modified=unsavedChanges&saveAndExit=0&noExitBtn=1';
+}
+
+// Listen for draw.io postMessage events
+window.addEventListener('message', function(evt) {
+  if (!evt.data) return;
+  var msg;
+  try {
+    msg = JSON.parse(evt.data);
+  } catch(e) {
+    return;
+  }
+
+  var frame = document.getElementById('drawioFrame');
+
+  if (msg.event === 'init') {
+    // draw.io is ready, send the XML
+    drawioReady = true;
+    var loading = document.getElementById('drawioLoading');
+    if (loading) loading.style.display = 'none';
+    if (frame) frame.style.display = 'block';
+
+    if (pendingXml && frame) {
+      frame.contentWindow.postMessage(JSON.stringify({
+        action: 'load',
+        xml: pendingXml,
+        autosave: 0
+      }), '*');
+    }
+  } else if (msg.event === 'save') {
+    // User clicked save in draw.io - update our stored XML
+    var f = getFile(selectedId);
+    if (f && msg.xml) {
+      f.resultXml = msg.xml;
+      f.resultBlob = new Blob([msg.xml], { type: 'application/xml' });
+    }
+    // Acknowledge the save
+    if (frame) {
+      frame.contentWindow.postMessage(JSON.stringify({
+        action: 'status',
+        message: 'Saved',
+        modified: false
+      }), '*');
+    }
+  } else if (msg.event === 'export') {
+    // Export result
+    if (msg.data) {
+      var f = getFile(selectedId);
+      if (f) {
+        var a = document.createElement('a');
+        a.href = 'data:application/xml;charset=utf-8,' + encodeURIComponent(msg.data);
+        a.download = f.name.replace(/\.[^.]+$/, '') + '_edited.drawio.xml';
+        a.click();
+      }
+    }
+  }
+});
+
+// ---- Process ----
+async function processFile(id) {
+  var f = getFile(id);
+  if (!f) return;
+
+  f.status = 'processing';
+  f.progress = 0;
+  f.progressText = 'Uploading...';
+  f.errorMsg = '';
+  f.resultXml = null;
+  currentTab = 'preview';
+  renderFileList();
+  renderMain();
+
+  var formData = new FormData();
+  formData.append('file', f.file);
+
+  try {
+    var stages = [
+      { pct: 10, text: 'Uploading...' },
+      { pct: 20, text: '[1] Text extraction (OCR)...' },
+      { pct: 40, text: '[2] Segmentation (SAM3)...' },
+      { pct: 60, text: '[3] Shape/Icon processing...' },
+      { pct: 75, text: '[4] Arrow detection...' },
+      { pct: 85, text: '[5] XML generation...' },
+      { pct: 95, text: '[6] Merging...' },
+    ];
+
+    var stageIdx = 0;
+    var progressTimer = setInterval(function() {
+      if (stageIdx < stages.length) {
+        f.progress = stages[stageIdx].pct;
+        f.progressText = stages[stageIdx].text;
+        stageIdx++;
+        if (selectedId === id) renderMainContent();
+      }
+    }, 3000);
+
+    var resp = await fetch(API_BASE + '/convert', {
+      method: 'POST',
+      body: formData,
+    });
+
+    clearInterval(progressTimer);
+
+    if (!resp.ok) {
+      var errData = {};
+      try { errData = await resp.json(); } catch(e) {}
+      throw new Error(errData.detail || 'HTTP ' + resp.status);
+    }
+
+    var data = await resp.json();
+
+    if (data.success && data.output_path) {
+      try {
+        var dlResp = await fetch(API_BASE + '/download?path=' + encodeURIComponent(data.output_path));
+        if (dlResp.ok) {
+          f.resultBlob = await dlResp.blob();
+        }
+      } catch(e) {}
+      f.resultPath = data.output_path;
+      f.status = 'done';
+      f.progress = 100;
+      f.progressText = 'Done!';
+      // Auto-switch to editor tab
+      if (selectedId === id) {
+        currentTab = 'editor';
+      }
+    } else {
+      throw new Error(data.error || 'Conversion failed');
+    }
+  } catch (err) {
+    f.status = 'error';
+    f.errorMsg = err.message;
+  }
+
+  renderFileList();
+  if (selectedId === id) renderMain();
+  updateButtons();
+}
+
+function processSelected() {
+  if (selectedId) processFile(selectedId);
+}
+
+async function processAll() {
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    if (f.status !== 'done' || document.getElementById('forceReprocess').checked) {
+      await processFile(f.id);
+    }
+  }
+}
+
+// ---- Download ----
+function downloadResult(id) {
+  var f = getFile(id);
+  if (!f) return;
+
+  var blob = f.resultBlob;
+  if (f.resultXml) {
+    blob = new Blob([f.resultXml], { type: 'application/xml' });
+  }
+
+  if (blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = f.name.replace(/\.[^.]+$/, '') + '_merged.drawio.xml';
+    a.click();
+    URL.revokeObjectURL(url);
+  } else if (f.resultPath) {
+    window.open(API_BASE + '/download?path=' + encodeURIComponent(f.resultPath));
+  }
+}
+</script>
+</body>
+</html>

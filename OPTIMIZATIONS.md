@@ -188,3 +188,56 @@ python main.py -i input/test.png
 - `modules/text/restorer.py` — Hybrid position snapping, text merging
 - `modules/text/processors/font_size.py` — Spatial font size estimation
 - `modules/basic_shape_processor.py` — Relaxed CV detection parameters
+
+## Web Frontend
+
+A single-page web application with embedded draw.io editor for interactive diagram editing.
+
+### Architecture
+
+- **Backend**: `server_pa.py` — FastAPI server with CORS middleware
+  - `GET /` — Serves the frontend SPA
+  - `POST /convert` — Upload image, run pipeline, return result path
+  - `GET /download?path=` — Secure file download (restricted to output/ directory)
+  - `GET /health` — Health check for frontend status indicator
+  - `GET /static/` — Static file serving (logo, demo images)
+
+- **Frontend**: `frontend/index.html` — Pure vanilla JS/CSS, no dependencies
+  - Left sidebar: backend status indicator, drag-drop upload area, file list with thumbnails and status badges
+  - Main area: tab-based view switching between original image preview and embedded draw.io editor
+  - Simulated progress bar showing pipeline stages during processing
+  - Embedded draw.io editor via iframe using `embed.diagrams.net` postMessage API
+
+### Draw.io Integration
+
+The editor is embedded directly in the page (no new tab), communicating via postMessage:
+1. iframe loads `embed.diagrams.net/?embed=1&proto=json`
+2. On `init` event → send `load` action with the conversion result XML
+3. On `save` event → update stored XML in memory
+4. Download button exports the latest (possibly edited) XML
+
+### Running the Web Server
+
+```bash
+# Install dependencies (if not already installed)
+pip install fastapi uvicorn python-multipart
+
+# Start the server
+cd /path/to/Edit-Banana
+python server_pa.py
+
+# Server runs at http://0.0.0.0:8000
+#   Frontend:  http://localhost:8000/
+#   API docs:  http://localhost:8000/docs
+#   Health:    http://localhost:8000/health
+```
+
+For remote servers without public port access, use VSCode port forwarding or SSH tunnel:
+```bash
+ssh -L 8000:localhost:8000 user@remote-server
+```
+
+### New/Modified Files
+
+- `server_pa.py` — **Rewritten**: FastAPI backend with frontend serving and CORS
+- `frontend/index.html` — **New**: Single-page application with embedded draw.io editor
