@@ -47,20 +47,75 @@ class FontSizeProcessor:
         return blocks
     
     def calculate_font_sizes(self, text_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Set font_size from block height (text: height - offset; formula: height * ratio)."""
+        """Assign font sizes using spatial hierarchy and character density."""
+        if not text_blocks:
+            return text_blocks
+
+        # Detect page height from max y coordinate
+        max_y = 0
+        for block in text_blocks:
+            geom = block.get("geometry", {})
+            y = geom.get("y", 0) + geom.get("height", 0)
+            max_y = max(max_y, y)
+        page_h = max_y if max_y > 100 else 661
+
         result = []
         for block in text_blocks:
             block = copy.copy(block)
-            geometry = block.get("geometry", {})
-            height = geometry.get("height", 12)
+            geom = block.get("geometry", {})
+            h = geom.get("height", 12)
+            w = geom.get("width", 50)
+            y = geom.get("y", 0)
+            text = block.get("text", "")
             is_latex = block.get("is_latex", False)
-            
+            is_bold = block.get("is_bold", False)
+            chars = max(len(text), 1)
+
             if is_latex:
-                font_size = height * self.formula_ratio
+                font_size = h * self.formula_ratio
             else:
-                font_size = height - self.text_offset
-            
-            block["font_size"] = max(font_size, 6)
+                # Width per character (pixel density indicator)
+                w_per_ch = w / chars
+
+                # Relative vertical position (0=top, 1=bottom)
+                rel_y = y / page_h if page_h > 0 else 0.5
+
+                # --- Classification ---
+                if w_per_ch > 13 and chars >= 15:
+                    # Section headers: "Sec.4: How to Optimize" etc
+                    font_size = 20
+                elif h > 32 or (w_per_ch > 15 and chars >= 4):
+                    # Large text (big bbox height or wide chars)
+                    font_size = 18
+                elif rel_y > 0.88:
+                    # Bottom row labels (Internal, External, Datasets, Judge)
+                    font_size = 8
+                elif rel_y > 0.75:
+                    # Lower section text (small labels)
+                    if w_per_ch < 11:
+                        font_size = 8
+                    else:
+                        font_size = 10
+                elif rel_y > 0.55:
+                    # Middle-lower section
+                    if h < 22:
+                        font_size = 8
+                    else:
+                        font_size = 12
+                elif w_per_ch < 9.5:
+                    # Dense text (small font)
+                    font_size = 8
+                elif w_per_ch < 11:
+                    # Medium-small
+                    font_size = 10
+                elif w_per_ch < 13:
+                    # Regular body
+                    font_size = 12
+                else:
+                    # Larger text
+                    font_size = 14
+
+            block["font_size"] = max(round(font_size), 6)
             result.append(block)
         return result
 

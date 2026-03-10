@@ -833,7 +833,7 @@ def detect_rectangles_robust(cv2_image: np.ndarray, existing_elements: dict, con
         # 面积限制（提高门槛减少误检）
         "min_area": 5000,            # 提高最小面积（原3000）
         "min_area_ratio": 0.005,     # 最小面积占比
-        "max_area_ratio": 0.5,
+        "max_area_ratio": 0.85,
         
         # 去重阈值（更积极去重）
         "iou_threshold": 0.2,        # 降低IoU阈值（原0.3）
@@ -841,14 +841,14 @@ def detect_rectangles_robust(cv2_image: np.ndarray, existing_elements: dict, con
         
         # 形状验证（提高要求）
         "min_rectangularity": 0.7,   # 提高矩形度（原0.6）
-        "border_contrast": 15,       # 提高边框对比度（原10）
+        "border_contrast": 8,       # 提高边框对比度（原10）
         
         # 容器检测
         "container_threshold": 0.8,
         "min_contained": 3,
         
         # 启用的检测方法（保守模式：只启用可靠的方法）
-        "enabled_methods": ["contour", "nested_contour"],
+        "enabled_methods": ["contour", "nested_contour", "region"],
         # 完整模式可用: ["contour", "region", "low_contrast", "hough_lines", "nested_contour"]
         
         # 内容验证（CV结果需要通过验证）
@@ -897,7 +897,7 @@ def detect_rectangles_robust(cv2_image: np.ndarray, existing_elements: dict, con
                 continue
             
             aspect = max(rw, rh) / max(1, min(rw, rh))
-            if aspect > 4:
+            if aspect > 30:
                 continue
             
             cnt_area = cv2.contourArea(approx)
@@ -1021,7 +1021,7 @@ def detect_rectangles_robust(cv2_image: np.ndarray, existing_elements: dict, con
             continue
         
         aspect = max(rw, rh) / max(1, min(rw, rh))
-        if aspect > 5:
+        if aspect > 30:
             continue
         
         cnt_area = cv2.contourArea(approx)
@@ -1530,8 +1530,10 @@ class BasicShapeProcessor(BaseProcessor):
         # 运行检测
         h, w = cv2_image.shape[:2]
         cv_results = detect_rectangles_robust(cv2_image, sam3_elements, {
-            "min_area_ratio": 0.07,
-            "max_area_ratio": 0.95
+            "min_area_ratio": 0.02,
+            "max_area_ratio": 0.95,
+            "min_rectangularity": 0.5,
+            "border_contrast": 5,
         })
         
         added_count = 0
@@ -1610,8 +1612,10 @@ def process_basic_shapes(image: np.ndarray, sam3_elements: dict) -> str:
     
     # 运行CV补充检测
     cv_results = detect_rectangles_robust(image, sam3_elements, {
-        "min_area_ratio": 0.07,
-        "max_area_ratio": 0.95
+        "min_area_ratio": 0.02,
+        "max_area_ratio": 0.95,
+        "min_rectangularity": 0.5,
+        "border_contrast": 5,
     })
     
     # 收集所有需要绘制的元素

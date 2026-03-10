@@ -100,7 +100,37 @@ class Pipeline:
     def text_restorer(self):
         """OCR/text step; None if deps missing."""
         if self._text_restorer is None and TextRestorer is not None:
-            self._text_restorer = TextRestorer(formula_engine='none')
+            # 读取 VLM 配置
+            mm_cfg = self.config.get('multimodal', {})
+            vlm_base_url = mm_cfg.get('local_base_url', '')
+            vlm_model = mm_cfg.get('local_model', '')
+            vlm_api_key = mm_cfg.get('local_api_key', 'not-needed')
+            vlm_mode = mm_cfg.get('mode', 'api')
+
+            # Check for explicit ocr_engine override
+            explicit_engine = mm_cfg.get('ocr_engine', '')
+            if explicit_engine == 'rapidocr':
+                ocr_engine = 'rapidocr'
+                vlm_config = None
+            elif vlm_base_url and vlm_model and vlm_mode != 'disabled':
+                ocr_engine = 'vlm'
+                vlm_config = {
+                    'base_url': vlm_base_url,
+                    'model': vlm_model,
+                    'api_key': vlm_api_key,
+                    'mode': mm_cfg.get('vlm_ocr_mode', 'enhance'),
+                    'max_tokens': mm_cfg.get('max_tokens', 4000),
+                    'timeout': mm_cfg.get('timeout', 120),
+                }
+            else:
+                ocr_engine = 'tesseract'
+                vlm_config = None
+
+            self._text_restorer = TextRestorer(
+                formula_engine='none',
+                ocr_engine=ocr_engine,
+                vlm_config=vlm_config,
+            )
         return self._text_restorer
     
     @property

@@ -19,6 +19,8 @@ from PIL import Image
 
 # OCR 模块（相对导入）
 from .ocr.local_ocr import LocalOCR
+from .ocr.rapid_ocr import RapidOCRAdapter
+from .ocr.vlm_ocr import VlmOCR
 from .coord_processor import CoordProcessor
 from .xml_generator import MxGraphXMLGenerator
 
@@ -35,14 +37,19 @@ class TextRestorer:
     默认使用本地 Tesseract OCR + 可选 Pix2Text 公式识别。
     """
 
-    def __init__(self, formula_engine: str = "pix2text"):
+    def __init__(self, formula_engine: str = "pix2text", ocr_engine: str = "tesseract", vlm_config: dict = None):
         """
         Args:
             formula_engine: 公式识别引擎 ('pix2text', 'none')
+            ocr_engine: OCR 引擎 ('tesseract', 'vlm')
+            vlm_config: VLM 配置 (base_url, model, api_key, mode 等)
         """
         self.formula_engine = formula_engine
+        self.ocr_engine = ocr_engine
+        self.vlm_config = vlm_config or {}
 
         self._layout_ocr = None
+        self._vlm_ocr = None
         self._pix2text_ocr = None
 
         self.font_size_processor = FontSizeProcessor()
@@ -58,11 +65,24 @@ class TextRestorer:
         }
 
     @property
+    def rapid_ocr(self):
+        if not hasattr(self, "_rapid_ocr") or self._rapid_ocr is None:
+            self._rapid_ocr = RapidOCRAdapter()
+        return self._rapid_ocr
+
+    @property
     def layout_ocr(self) -> LocalOCR:
         """延迟初始化本地 OCR"""
         if self._layout_ocr is None:
             self._layout_ocr = LocalOCR()
         return self._layout_ocr
+
+    @property
+    def vlm_ocr(self) -> VlmOCR:
+        """延迟初始化 VLM OCR"""
+        if self._vlm_ocr is None:
+            self._vlm_ocr = VlmOCR(**self.vlm_config)
+        return self._vlm_ocr
 
     @property
     def pix2text_ocr(self):
@@ -150,6 +170,10 @@ class TextRestorer:
             text_blocks = self._ocr_result_to_dict_list(ocr_result)
         
         print(f"   {len(text_blocks)} 个文字块")
+        
+        if self.ocr_engine == "vlm":
+            text_blocks = self._snap_to_rapid_ocr(text_blocks, str(image_path))
+        # text_blocks = self._merge_nearby_blocks(text_blocks)  # skip: VLM already groups text
         
         # Step 3: 坐标转换
         print("\n📐 坐标转换...")
@@ -273,9 +297,19 @@ class TextRestorer:
     
     def _run_ocr(self, image_path: str):
         """运行 OCR（本地 Tesseract + 可选 Pix2Text 公式优化）"""
-        print("\n📖 Text OCR (Tesseract)...")
-        text_start = time.time()
-        ocr_result = self.layout_ocr.analyze_image(image_path)
+        if self.ocr_engine == "vlm":
+            _model = self.vlm_config.get("model", "unknown")
+            print(f"Text OCR (VLM {_model})...")
+            text_start = time.time()
+            ocr_result = self.vlm_ocr.analyze_image(image_path)
+        elif self.ocr_engine == "rapidocr":
+            print("Text OCR (RapidOCR)...")
+            text_start = time.time()
+            ocr_result = self.rapid_ocr.analyze_image(image_path)
+        else:
+            print("Text OCR (Tesseract)...")
+            text_start = time.time()
+            ocr_result = self.layout_ocr.analyze_image(image_path)
         self.timing["text_ocr"] = time.time() - text_start
         print(f"   {len(ocr_result.text_blocks)} 个文字块 ({self.timing['text_ocr']:.2f}s)")
 
@@ -453,6 +487,243 @@ class TextRestorer:
         min_x, min_y, max_x, max_y = min(xs), min(ys), max(xs), max(ys)
         return [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
     
+
+
+    def _snap_to_rapid_ocr(self, text_blocks, image_path):
+        """Snap VLM text block positions to Tesseract-detected positions.
+
+        For each VLM block, find matching Tesseract word(s) by text similarity
+        and spatial proximity, then use Tesseract's more accurate bbox.
+        """
+        from difflib import SequenceMatcher
+
+        # Run Tesseract
+        rapid_result = self.rapid_ocr.analyze_image(image_path)
+        rapid_blocks = []
+        for tb in rapid_result.text_blocks:
+            poly = tb.polygon
+            if not poly:
+                continue
+            xs = [p[0] for p in poly]
+            ys = [p[1] for p in poly]
+            rapid_blocks.append({
+                "text": tb.text.strip(),
+                "polygon": poly,
+                "bbox": (min(xs), min(ys), max(xs), max(ys)),
+                "used": False,
+            })
+
+        if not rapid_blocks:
+            return text_blocks
+
+        snapped = 0
+        for vblock in text_blocks:
+            vtext = vblock.get("text", "").strip().lower()
+            if not vtext:
+                continue
+
+            vpoly = vblock.get("polygon", [])
+            if not vpoly:
+                continue
+            vxs = [p[0] for p in vpoly]
+            vys = [p[1] for p in vpoly]
+            vcx = sum(vxs) / len(vxs)
+            vcy = sum(vys) / len(vys)
+
+            # Find best matching Tesseract block(s)
+            # Strategy: look for Tesseract words that are contained in VLM text
+            best_score = 0
+            best_match_indices = []
+
+            # First try exact word match
+            vwords = vtext.split()
+            matched_tess = []
+            for vword in vwords:
+                best_word_score = 0
+                best_word_idx = -1
+                for ti, tb in enumerate(rapid_blocks):
+                    if tb["used"]:
+                        continue
+                    ttext = tb["text"].strip().lower()
+                    if not ttext or len(ttext) < 2:
+                        continue
+                    # Similarity score
+                    sim = SequenceMatcher(None, vword, ttext).ratio()
+                    if sim > 0.6 and sim > best_word_score:
+                        # Check spatial proximity (within 200px)
+                        tcx = (tb["bbox"][0] + tb["bbox"][2]) / 2
+                        tcy = (tb["bbox"][1] + tb["bbox"][3]) / 2
+                        dist = ((vcx - tcx)**2 + (vcy - tcy)**2) ** 0.5
+                        if dist < 300:  # reasonable proximity
+                            best_word_score = sim
+                            best_word_idx = ti
+                if best_word_idx >= 0:
+                    matched_tess.append(best_word_idx)
+
+            if matched_tess:
+                # Compute merged Tesseract bbox
+                all_polys = []
+                for ti in matched_tess:
+                    all_polys.extend(rapid_blocks[ti]["polygon"])
+                    rapid_blocks[ti]["used"] = True
+
+                min_x = min(p[0] for p in all_polys)
+                min_y = min(p[1] for p in all_polys)
+                max_x = max(p[0] for p in all_polys)
+                max_y = max(p[1] for p in all_polys)
+
+                vblock["polygon"] = [
+                    (min_x, min_y), (max_x, min_y),
+                    (max_x, max_y), (min_x, max_y)
+                ]
+                vblock["font_size_px"] = max_y - min_y
+                snapped += 1
+
+        print(f"   RapidOCR snap: {snapped}/{len(text_blocks)} blocks snapped")
+        return text_blocks
+
+    def _merge_nearby_blocks(self, text_blocks):
+        """Merge horizontally adjacent word-level blocks into line-level blocks.
+
+        Tesseract often returns individual words. This merges words on the
+        same line into a single block with a combined bounding polygon.
+
+        Merge criteria:
+        - Similar Y center (within 0.6x avg height)
+        - Similar height (within 2x ratio)
+        - Horizontal gap < 1.5x avg height
+        """
+        if len(text_blocks) <= 1:
+            return text_blocks
+
+        def get_bbox(block):
+            poly = block.get("polygon", [])
+            if not poly:
+                return (0, 0, 0, 0)
+            xs = [p[0] for p in poly]
+            ys = [p[1] for p in poly]
+            return (min(xs), min(ys), max(xs), max(ys))
+
+        # Sort by y-center then x
+        blocks_with_bbox = []
+        for b in text_blocks:
+            bbox = get_bbox(b)
+            cy = (bbox[1] + bbox[3]) / 2
+            blocks_with_bbox.append((b, bbox, cy))
+        blocks_with_bbox.sort(key=lambda t: (t[2], t[1][0]))
+
+        # Union-Find
+        n = len(blocks_with_bbox)
+        parent = list(range(n))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        # Try merging pairs
+        for i in range(n):
+            bi, bbox_i, cy_i = blocks_with_bbox[i]
+            hi = bbox_i[3] - bbox_i[1]
+            if hi <= 0:
+                continue
+            for j in range(i + 1, n):
+                bj, bbox_j, cy_j = blocks_with_bbox[j]
+                hj = bbox_j[3] - bbox_j[1]
+                if hj <= 0:
+                    continue
+
+                avg_h = (hi + hj) / 2
+                if avg_h <= 0:
+                    continue
+
+                # Y-center close enough (same line)
+                if abs(cy_i - cy_j) > avg_h * 0.6:
+                    continue
+
+                # Height ratio check
+                ratio = max(hi, hj) / min(hi, hj)
+                if ratio > 2.0:
+                    continue
+
+                # Horizontal gap check
+                gap = bbox_j[0] - bbox_i[2]  # left of j - right of i
+                if gap < 0:
+                    # Overlapping or reversed order
+                    gap = bbox_i[0] - bbox_j[2]
+                if gap > avg_h * 1.5:
+                    continue
+
+                union(i, j)
+
+        # Group by root
+        groups = {}
+        for i in range(n):
+            root = find(i)
+            if root not in groups:
+                groups[root] = []
+            groups[root].append(i)
+
+        # Build merged blocks
+        merged = []
+        for root, indices in groups.items():
+            # Sort by x position within group
+            indices.sort(key=lambda i: blocks_with_bbox[i][1][0])
+
+            # Merge text
+            texts = [blocks_with_bbox[i][0]["text"] for i in indices]
+            merged_text = " ".join(texts)
+
+            # Merge polygon (bounding box of all)
+            all_polys = []
+            for i in indices:
+                poly = blocks_with_bbox[i][0].get("polygon", [])
+                all_polys.extend(poly)
+
+            if all_polys:
+                min_x = min(p[0] for p in all_polys)
+                min_y = min(p[1] for p in all_polys)
+                max_x = max(p[0] for p in all_polys)
+                max_y = max(p[1] for p in all_polys)
+                merged_polygon = [
+                    (min_x, min_y), (max_x, min_y),
+                    (max_x, max_y), (min_x, max_y)
+                ]
+            else:
+                merged_polygon = []
+
+            # Take style from first block
+            first = blocks_with_bbox[indices[0]][0]
+            merged_block = dict(first)
+            merged_block["text"] = merged_text
+            merged_block["polygon"] = merged_polygon
+
+            # Recalculate font_size_px from merged height
+            if merged_polygon:
+                merged_block["font_size_px"] = max_y - min_y
+
+            # If any block in group is bold, mark merged as bold
+            if any(blocks_with_bbox[i][0].get("is_bold", False) for i in indices):
+                merged_block["is_bold"] = True
+                merged_block["font_weight"] = "bold"
+
+            merged.append(merged_block)
+
+        # Sort by y then x for consistent output
+        merged.sort(key=lambda b: (
+            min(p[1] for p in b["polygon"]) if b.get("polygon") else 0,
+            min(p[0] for p in b["polygon"]) if b.get("polygon") else 0
+        ))
+
+        print(f"   Text merge: {len(text_blocks)} blocks -> {len(merged)} blocks")
+        return merged
+
     def _ocr_result_to_dict_list(self, ocr_result) -> List[Dict[str, Any]]:
         """将 OCR 结果转换为字典列表"""
         return [
